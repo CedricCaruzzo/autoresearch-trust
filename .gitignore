@@ -21,3 +21,10 @@ dev/
 
 # Results file
 results.tsv
+
+# Trust layer — key is a local secret, NEVER commit it.
+# The manifest (.trust_manifest.json) IS committed — that's the proof.
+.trust_key
+
+# Trust runtime DB (generated locally)
+trust.db
