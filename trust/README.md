@@ -60,12 +60,33 @@ trust verify
 
 ---
 
-### Layer 2 — Ledger (coming in Phase 3)
+### Layer 2 — Ledger (implemented)
 
 **File:** `ledger.py`
 **Threat addressed:** #4
 
-An append-only SQLite log where each entry is chained to the previous one via a Merkle hash. Every experiment run — whether it improved the metric or not — is recorded before the result is known. Deleting or rewriting entries breaks the chain and is immediately detectable.
+An append-only SQLite log where each entry is chained to the previous one via a Merkle hash. Every experiment run — whether it improved the metric or not — is recorded *before* the result is known. Deleting or rewriting entries breaks the chain and is immediately detectable.
+
+Each run is a two-phase operation:
+1. `open_run()` — called before the agent script runs. The entry is written immediately, so the run is on the record even if the process crashes.
+2. `close_run()` — called after the agent exits with result, status (`keep`/`discard`/`crash`), and a description.
+
+The chain hash of each entry is `SHA-256(prev_chain_hash + opened_at + nonce + script)`. Deleting any entry breaks the hash link to all subsequent entries.
+
+**Known limitation:** the chain proves the *ordering* of entries that are present — it does not prove that no entries were removed, because a sufficiently motivated agent could delete an entry and re-chain the remainder. The statistical auditor (Layer 5) addresses this by flagging `id` gaps in the ledger. As with the manifest, this is a demonstration of the concept; a production version would anchor chain hashes to an external append-only service.
+
+`trust run` integrates both layers: it verifies the manifest before the agent runs, opens a ledger entry, executes the script, closes the entry, then re-verifies the manifest post-run.
+
+```bash
+# Wrap an agent experiment with full integrity checks
+TRUST_VAL_BPB=0.9979 TRUST_STATUS=keep TRUST_DESCRIPTION="baseline" \
+    trust run train.py
+```
+
+```bash
+# Verify the ledger chain
+trust verify-ledger  # coming in a future CLI update
+```
 
 ---
 
