@@ -96,6 +96,33 @@ Analyses the full run history for anomaly patterns: improvement rates that excee
 
 ---
 
+## Scope and honest limitations
+
+**This project is a demonstration, not a production security system.**
+
+Its goal is to make the problem of agent trust *legible* — to show that the question "how do I know the agent didn't cheat?" has a structure, and that cryptographic primitives already used in other domains (HMAC, Merkle chains, commitment schemes) can be mapped onto it. The layers here are working implementations of those ideas, not hardened production tooling.
+
+### The key is only as safe as your machine
+
+The HMAC key is stored as a file on the researcher's machine. Since the agent runs as the same user, it could in principle locate the key, re-run `trust init`, regenerate the manifest to match tampered files, and commit the new manifest. `trust verify` would then pass.
+
+This is a known limitation, not an oversight. Closing it fully would require:
+- Storing the key in a system keychain (macOS Keychain, OS credential store) so programmatic access from a subprocess is restricted
+- Or signing with a hardware security key (YubiKey) that cannot be read from software
+- Or performing the verification step on a separate machine that the agent never touches
+
+Each of these is a real engineering path. This project deliberately stops short of them to keep the code readable and the concepts central.
+
+### Re-running `trust init` is a visible trust reset
+
+If the key is lost or if an agent manages to re-anchor the manifest, the HMAC chain breaks at that point. This event is always visible in `git log` — a new `.trust_manifest.json` commit mid-run is itself a signal worth investigating. The raw SHA-256 hashes in all prior manifest commits remain auditable even without the key.
+
+### The honest ceiling
+
+No software-only solution running as the same OS user can make cheating *impossible*. The value of this layer is not prevention — it is raising the cost and visibility of cheating. An agent that games the metric must now also actively interfere with a separate integrity system, and that interference leaves traces in git history, the ledger, and the statistical audit. The goal is to make silent, undetected gaming structurally harder.
+
+---
+
 ## Design principles
 
 **Cryptography makes cheating leave a trace, not impossible.**
