@@ -126,12 +126,41 @@ If `TRUST_RATIONALE` and `TRUST_DIRECTION` are not set, the run still proceeds b
 
 ---
 
-### Layer 5 — Statistical Auditor (coming in Phase 6)
+### Layer 5 — Statistical Auditor (implemented)
 
 **File:** `auditor.py`
 **Threat addressed:** #4 and #5 in aggregate
 
-Analyses the full run history for anomaly patterns: improvement rates that exceed theoretical bounds, prediction accuracy that is too low (post-hoc rationalisation) or too high (suspiciously well-calibrated), and distribution of keep/discard decisions.
+Analyses the full run history for anomaly patterns. Where the previous layers protect individual runs, the auditor looks at the *pattern across runs* — the signature that gaming leaves even when each individual run passes integrity checks.
+
+Findings are classified as `INFO`, `WARNING`, or `ANOMALY`. The command exits with code 1 if any anomalies are found.
+
+| Check | Severity | What it catches |
+|-------|----------|-----------------|
+| Ledger chain integrity | ANOMALY | Tampered or deleted entries |
+| Hypothesis integrity | ANOMALY | Post-commitment field edits |
+| ID gaps | ANOMALY | Deleted runs (chain re-anchored to cover up) |
+| Unclosed runs | WARNING | Silent crashes not properly logged |
+| Missing hypotheses | WARNING | Runs with no committed prediction (>20% threshold) |
+| Keep rate | WARNING | No discards across many runs (>85% keep rate) |
+| Direction accuracy | WARNING | Prediction accuracy below random chance (~50%) |
+| Monotone improvement | WARNING | Every kept run strictly better — no plateaus or near-misses |
+
+```bash
+trust audit --db trust.db
+```
+
+Example output for a suspicious run history:
+```
+[ANOMALY] ID_GAPS: Non-contiguous run IDs detected — 2 gap(s) at positions [3, 7].
+[WARNING] HIGH_KEEP_RATE: Keep rate is 100% with no discards.
+[WARNING] LOW_DIRECTION_ACCURACY: Direction accuracy (30%) is below random-chance baseline (~50%).
+[WARNING] MONOTONE_IMPROVEMENT: All 8 kept runs show strictly monotone val_bpb improvement.
+[INFO   ] CHAIN_OK: Ledger Merkle chain is intact.
+[INFO   ] RUN_COUNT: Total runs in ledger: 8
+
+[trust] Audit complete — 1 anomaly(ies), 3 warning(s), 2 info(s)
+```
 
 ---
 

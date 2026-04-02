@@ -158,8 +158,27 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
-    print("trust audit — not yet implemented (Phase 6)")
-    return 0
+    from pathlib import Path
+    from trust.auditor import audit, ANOMALY, WARNING, INFO
+
+    db_path = Path(args.db)
+    report = audit(db_path)
+
+    # Severity order for display
+    order = {ANOMALY: 0, WARNING: 1, INFO: 2}
+    sorted_findings = sorted(report.findings, key=lambda f: order[f.severity])
+
+    labels = {ANOMALY: "ANOMALY", WARNING: "WARNING", INFO: "INFO   "}
+    for f in sorted_findings:
+        prefix = labels[f.severity]
+        # indent continuation lines
+        msg = f.message.replace("\n", "\n         ")
+        print(f"[{prefix}] {f.code}: {msg}")
+
+    print()
+    print(f"[trust] Audit complete — {report.summary()}")
+
+    return 1 if report.has_anomalies else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
