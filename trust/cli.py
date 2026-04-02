@@ -58,10 +58,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     from trust.manifest import verify, ManifestError
     from trust.ledger import open_run, close_run, LedgerError
     from trust.hypothesis import commit_hypothesis, HypothesisError
+    from trust.evaluator import generate_and_store_nonce, run_isolated_eval, EvaluatorError
 
     db_path = Path(args.db)
     manifest_path = Path(args.manifest)
     key_file = Path(args.key_file)
+    checkpoint_path = Path(args.checkpoint) if args.checkpoint else None
+    prepare_path = Path(args.prepare) if args.prepare else Path("prepare.py")
 
     # 1. Verify manifest before allowing the agent to run
     try:
@@ -88,7 +91,11 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"[trust] Ledger entry #{run_id} opened.")
 
-    # 3. Commit hypothesis BEFORE the script runs — must precede execution
+    # 3. Generate eval nonce BEFORE the script runs — provenance anchor
+    eval_nonce = generate_and_store_nonce(db_path, run_id, checkpoint_path)
+    print(f"[trust] Eval nonce generated: {eval_nonce[:8]}…")
+
+    # 4. Commit hypothesis BEFORE the script runs — must precede execution
     rationale = os.environ.get("TRUST_RATIONALE", "").strip()
     direction = os.environ.get("TRUST_DIRECTION", "").strip()
     predicted_bpb_str = os.environ.get("TRUST_PREDICTED_BPB", "").strip()
@@ -113,24 +120,45 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"[trust] ERROR committing hypothesis: {exc}", file=sys.stderr)
             return 1
 
-    # 4. Execute the agent script
+    # 5. Execute the agent script
     result = subprocess.run([sys.executable, args.script])
     exit_code = result.returncode
 
-    # 5. Close the ledger entry — status is 'crash' if the script failed
+    # 6. Close the ledger entry — status is 'crash' if the script failed
+    val_bpb = None
     if exit_code != 0:
         status = "crash"
-        val_bpb = None
         description = f"script exited with code {exit_code}"
         print(f"[trust] Script exited with code {exit_code}. Logged as crash.", file=sys.stderr)
     else:
-        val_bpb_str = os.environ.get("TRUST_VAL_BPB", "").strip()
         status = os.environ.get("TRUST_STATUS", "keep").strip()
         description = os.environ.get("TRUST_DESCRIPTION", "").strip()
-
-        val_bpb = float(val_bpb_str) if val_bpb_str else None
         if status not in ("keep", "discard"):
             status = "keep"
+
+        # If a checkpoint path was given, use the isolated evaluator.
+        # Otherwise fall back to self-reported TRUST_VAL_BPB (with a warning).
+        if checkpoint_path and checkpoint_path.exists():
+            try:
+                eval_result = run_isolated_eval(
+                    db_path, run_id, checkpoint_path, prepare_path
+                )
+                val_bpb = eval_result.val_bpb
+                print(f"[trust] Isolated eval complete — val_bpb={val_bpb:.6f} (nonce={eval_result.nonce[:8]}…)")
+            except EvaluatorError as exc:
+                print(f"[trust] WARNING — isolated eval failed: {exc}", file=sys.stderr)
+                print("[trust] Falling back to TRUST_VAL_BPB env var.", file=sys.stderr)
+                val_bpb_str = os.environ.get("TRUST_VAL_BPB", "").strip()
+                val_bpb = float(val_bpb_str) if val_bpb_str else None
+        else:
+            val_bpb_str = os.environ.get("TRUST_VAL_BPB", "").strip()
+            val_bpb = float(val_bpb_str) if val_bpb_str else None
+            if val_bpb is not None:
+                print(
+                    "[trust] NOTE — val_bpb is self-reported (no --checkpoint given). "
+                    "Use --checkpoint for isolated evaluation.",
+                    file=sys.stderr,
+                )
 
     try:
         close_run(db_path, run_id, val_bpb=val_bpb, status=status, description=description)
@@ -140,7 +168,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"[trust] Ledger entry #{run_id} closed — status={status}, val_bpb={val_bpb}.")
 
-    # 6. Re-verify manifest after the agent ran (catches in-run tampering)
+    # 7. Re-verify manifest after the agent ran (catches in-run tampering)
     try:
         ok, violations = verify(key_file=key_file, manifest_file=manifest_path)
     except ManifestError as exc:
@@ -218,6 +246,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--manifest", default=".trust_manifest.json", metavar="PATH")
     p_run.add_argument("--key-file", default=".trust_key", metavar="PATH")
     p_run.add_argument("--db", default="trust.db", metavar="PATH")
+    p_run.add_argument(
+        "--checkpoint", default=None, metavar="PATH",
+        help="Model checkpoint saved by the agent script. "
+             "If provided, evaluation runs in an isolated subprocess.",
+    )
+    p_run.add_argument(
+        "--prepare", default="prepare.py", metavar="PATH",
+        help="Path to prepare.py (default: ./prepare.py).",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_audit = sub.add_parser("audit", help="Statistical audit across all logged runs.")

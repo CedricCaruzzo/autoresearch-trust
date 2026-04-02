@@ -90,12 +90,34 @@ trust verify-ledger  # coming in a future CLI update
 
 ---
 
-### Layer 3 — Isolated Evaluator (coming in Phase 4)
+### Layer 3 — Isolated Evaluator (implemented)
 
-**File:** `evaluator.py`
+**Files:** `evaluator.py`, `_eval_worker.py`
 **Threat addressed:** #3
 
-Runs the evaluation in an isolated subprocess that has no write access to the data or evaluation scripts. Injects a random nonce into each evaluation run, so the agent cannot overfit to a fixed validation set over many iterations.
+Instead of trusting the `val_bpb` number the agent reports itself, this layer runs evaluation independently in a fresh subprocess. The agent's in-memory state, monkey-patched functions, and any modified imports are gone — the eval worker starts a clean Python interpreter and imports `evaluate_bpb()` from the manifest-verified `prepare.py`.
+
+Every run also gets a unique **eval nonce** generated and stored *before* the agent script runs, creating a provenance anchor that pre-dates the result.
+
+```
+trust run train.py --checkpoint checkpoint.pt --prepare prepare.py
+```
+
+**Full flow with isolated eval:**
+1. Manifest verified (pre-run)
+2. Ledger entry opened
+3. Eval nonce generated and stored
+4. Hypothesis committed
+5. Agent script runs → saves checkpoint
+6. `_eval_worker` subprocess: loads checkpoint → calls `evaluate_bpb()` → prints `val_bpb`
+7. Ledger entry closed with the worker's authoritative result
+8. Manifest re-verified (post-run)
+
+**Why process isolation matters:**
+If the agent modifies `train.py` to monkey-patch `evaluate_bpb()` at import time, that patch lives only in the training process. The eval worker starts a fresh interpreter — the patch is gone. The manifest ensures the `prepare.py` on disk is unmodified; the subprocess isolation ensures the runtime is also clean.
+
+**The nonce limitation (honest):**
+Full nonce injection into the validation dataloader's sampling order requires modifying `prepare.py`'s `make_dataloader()` — which is a protected file. Today the nonce is a **provenance record**: it proves which evaluation run corresponds to which training run and pre-dates the result. The architectural slot exists in `_eval_worker.py` for a future version that seeds document shuffling inside a protected eval enclave (e.g. a TEE), making overfitting to the fixed val shard detectable via per-nonce score variance over many runs.
 
 ---
 
