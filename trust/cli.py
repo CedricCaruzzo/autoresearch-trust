@@ -13,13 +13,42 @@ import sys
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    print("trust init — not yet implemented (Phase 2)")
+    from trust.manifest import create, ManifestError
+    from pathlib import Path
+
+    try:
+        create(
+            files=[Path(f) for f in args.protect],
+            key_file=Path(args.key_file),
+            manifest_file=Path(args.manifest),
+        )
+    except ManifestError as exc:
+        print(f"[trust] ERROR: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    print("trust verify — not yet implemented (Phase 2)")
-    return 0
+    from trust.manifest import verify, ManifestError
+    from pathlib import Path
+
+    try:
+        ok, violations = verify(
+            key_file=Path(args.key_file),
+            manifest_file=Path(args.manifest),
+        )
+    except ManifestError as exc:
+        print(f"[trust] ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if ok:
+        print("[trust] OK — all protected files match the manifest.")
+        return 0
+
+    print("[trust] INTEGRITY VIOLATION DETECTED:", file=sys.stderr)
+    for v in violations:
+        print(f"  {v}", file=sys.stderr)
+    return 1
 
 
 def cmd_run(args: argparse.Namespace) -> int:
