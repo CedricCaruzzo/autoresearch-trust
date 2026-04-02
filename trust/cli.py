@@ -52,10 +52,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    import os
     import subprocess
     from pathlib import Path
     from trust.manifest import verify, ManifestError
     from trust.ledger import open_run, close_run, LedgerError
+    from trust.hypothesis import commit_hypothesis, HypothesisError
 
     db_path = Path(args.db)
     manifest_path = Path(args.manifest)
@@ -86,19 +88,42 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"[trust] Ledger entry #{run_id} opened.")
 
-    # 3. Execute the agent script
+    # 3. Commit hypothesis BEFORE the script runs — must precede execution
+    rationale = os.environ.get("TRUST_RATIONALE", "").strip()
+    direction = os.environ.get("TRUST_DIRECTION", "").strip()
+    predicted_bpb_str = os.environ.get("TRUST_PREDICTED_BPB", "").strip()
+    predicted_bpb = float(predicted_bpb_str) if predicted_bpb_str else None
+
+    if not rationale or not direction:
+        print(
+            "[trust] WARNING — no hypothesis committed (set TRUST_RATIONALE and "
+            "TRUST_DIRECTION env vars before running). This run will be flagged by the auditor.",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            hyp_id = commit_hypothesis(
+                db_path, run_id,
+                rationale=rationale,
+                direction=direction,
+                predicted_bpb=predicted_bpb,
+            )
+            print(f"[trust] Hypothesis #{hyp_id} committed — direction={direction}.")
+        except HypothesisError as exc:
+            print(f"[trust] ERROR committing hypothesis: {exc}", file=sys.stderr)
+            return 1
+
+    # 4. Execute the agent script
     result = subprocess.run([sys.executable, args.script])
     exit_code = result.returncode
 
-    # 4. Close the ledger entry — status is 'crash' if the script failed
+    # 5. Close the ledger entry — status is 'crash' if the script failed
     if exit_code != 0:
         status = "crash"
         val_bpb = None
         description = f"script exited with code {exit_code}"
         print(f"[trust] Script exited with code {exit_code}. Logged as crash.", file=sys.stderr)
     else:
-        # On success, prompt for result details (or read from env for automation)
-        import os
         val_bpb_str = os.environ.get("TRUST_VAL_BPB", "").strip()
         status = os.environ.get("TRUST_STATUS", "keep").strip()
         description = os.environ.get("TRUST_DESCRIPTION", "").strip()
@@ -115,7 +140,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"[trust] Ledger entry #{run_id} closed — status={status}, val_bpb={val_bpb}.")
 
-    # 5. Re-verify manifest after the agent ran (catches in-run tampering)
+    # 6. Re-verify manifest after the agent ran (catches in-run tampering)
     try:
         ok, violations = verify(key_file=key_file, manifest_file=manifest_path)
     except ManifestError as exc:

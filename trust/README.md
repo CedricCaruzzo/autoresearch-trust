@@ -99,12 +99,30 @@ Runs the evaluation in an isolated subprocess that has no write access to the da
 
 ---
 
-### Layer 4 — Hypothesis Logger (coming in Phase 5)
+### Layer 4 — Hypothesis Logger (implemented)
 
 **File:** `hypothesis.py`
 **Threat addressed:** #5
 
-Before each experiment runs, the agent must emit a structured prediction: what it expects to change and why. This prediction is committed to the ledger before the result is known. An agent that is genuinely discovering improvements will show correlated predictions and results. An agent that is gaming will show decoupled noise in predictions but suspiciously clean results — a statistically detectable signature.
+Before each experiment runs, the agent must commit a structured prediction: what it expects to change and why, and the expected direction (`improve`, `degrade`, `neutral`). This is written to the ledger before the script executes — the prediction and the outcome sit side by side, making post-hoc rationalisation visible.
+
+Each hypothesis is sealed with a SHA-256 commit hash over all its fields. Any retroactive edit to the rationale, direction, or predicted value is detectable via `verify_hypothesis_integrity()`.
+
+```bash
+# Set before calling trust run — committed before the script executes
+export TRUST_RATIONALE="Increasing depth from 8 to 10 should improve val_bpb by ~0.01"
+export TRUST_DIRECTION="improve"
+export TRUST_PREDICTED_BPB="0.988"
+export TRUST_VAL_BPB="0.991"
+export TRUST_STATUS="keep"
+export TRUST_DESCRIPTION="depth 8→10"
+
+trust run train.py
+```
+
+If `TRUST_RATIONALE` and `TRUST_DIRECTION` are not set, the run still proceeds but is flagged by the auditor as missing a hypothesis — a signal worth investigating.
+
+**The statistical signal:** a genuine researcher predicts correctly more often than chance, and their errors are random. An agent gaming the metric shows a specific anomaly: prediction accuracy near chance (hypotheses are noise), but results are suspiciously clean. The auditor layer uses this decoupling as its primary detection signal.
 
 ---
 
